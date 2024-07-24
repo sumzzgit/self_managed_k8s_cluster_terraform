@@ -1,0 +1,289 @@
+-------------- ADD CCM ( Cloud Controller Manager ) TO SELF MANAGED K8S CLUSTER --------------------
+How to Set Up Cloud Controller Manager in AWS with Kubeadm -> https://devopscube.com/aws-cloud-controller-manager/
+
+https://cloud-provider-aws.sigs.k8s.io/prerequisites/
+
+Getting Started with the External Cloud Controller Manager-> https://cloud-provider-aws.sigs.k8s.io/getting_started/
+
+The Kubernetes Cloud Controller Manager -> https://medium.com/@m.json/the-kubernetes-cloud-controller-manager-d440af0d2be5 ( deep dive )
+
+Kubernetes integration using AWS cloud provider -> https://www.zippyops.com/kubernetes-integration-using-aws-cloud-provider (using yum only)
+
+----- pre-requisites
+-> your EC2 instances should have the IAM role attached with following policies 
+
+Control Plane Policy 
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:CreateVolume",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifyVolume",
+        "ec2:AttachVolume",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteVolume",
+        "ec2:DetachVolume",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:DescribeVpcs",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:AttachLoadBalancerToSubnets",
+        "elasticloadbalancing:ApplySecurityGroupsToLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateLoadBalancerPolicy",
+        "elasticloadbalancing:CreateLoadBalancerListeners",
+        "elasticloadbalancing:ConfigureHealthCheck",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteLoadBalancerListeners",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DetachLoadBalancerFromSubnets",
+        "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+        "elasticloadbalancing:SetLoadBalancerPoliciesForBackendServer",
+        "elasticloadbalancing:AddTags",
+        "elasticloadbalancing:CreateListener",
+        "elasticloadbalancing:CreateTargetGroup",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerPolicies",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:RegisterTargets",
+        "elasticloadbalancing:DeregisterTargets",
+        "elasticloadbalancing:SetLoadBalancerPoliciesOfListener",
+        "iam:CreateServiceLinkedRole",
+        "kms:DescribeKey"
+      ],
+      "Resource": [
+        "*"
+      ]
+    }
+  ]
+}
+
+Node Policy
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions",
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:ListImages",
+        "ecr:BatchGetImage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+-> all the ec2 instances should have hostname should have its own private DNS address . exp -> ip-172-31-16-213.us-west-2.compute.internal
+to set this 
+sudo hostnamectl set-hostname $(curl -s http://169.254.169.254/latest/meta-data/local-hostname) 
+
+----- using the kubeadm configuration 
+
+-> install system utilities like kubeadm , kubelet , crio and kubectl 
+-> Create configuration file kubeadm.config
+
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+apiServer:
+  certSANs:
+    - 127.0.0.1
+    - 52.38.15.235
+  extraArgs:
+    bind-address: "0.0.0.0"
+    cloud-provider: external
+clusterName: kubernetes
+scheduler:
+  extraArgs:
+    bind-address: "0.0.0.0"
+controllerManager:
+  extraArgs:
+    bind-address: "0.0.0.0"
+    cloud-provider: external
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+nodeRegistration:
+  name: ip-172-31-21-29.us-west-2.compute.internal
+  kubeletExtraArgs:
+    cloud-provider: external
+
+here in this file change the certSANs -> to your control plane public ip 
+change the node registration name to your control plane private dns name ( hostname )
+modiify the podSubnet and serviceSubnet if needed.
+
+-> initialize the configuration to bootstrap the kubeadm configuration
+kubeadm init --config=kubeadm.config
+
+join token will be generated note down that 
+
+-> Create a configuration file in each worker node kubeadm-join-config.yaml
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    token: 30am0s.hleb5xs1dyz4ridc   
+    apiServerEndpoint: "172.31.21.29:6443"
+    caCertHashes:
+      - "sha256:8b2127f960d88432fb35fd7488a501ad189e1a4ab319158d0e01a1db7fec96d7" 
+nodeRegistration:
+  name: ip-172-31-18-193.us-west-2.compute.internal
+  kubeletExtraArgs:
+    cloud-provider: external
+
+change the bootstrapToken , apiServerEndpoint , caCertHashes and nodeRegistration name to your worker node private DNS 
+
+-> To join the workers to the controller, use the following command
+kubeadm join --config kubeadm-join-config.yaml
+
+-> Tag AWS Resources (this is important)
+tagging the resources are important because the cloud provider gets to know which resources are used by the cluster . 
+this is make sure if create the LoadBalancer service and delete the service within cluster then LoadBalancer should also be deleted. 
+
+tag VPC, Subnet, EC2 instance, Security Group, etc services which used by the cluster 
+If the AWS resources are managed by one cluster -> kubernetes.io/cluster/kubernetes = owned
+If the resources are managed by multiple clusters -> kubernetes.io/cluster/kubernetes = shared
+
+and subnets should be taged like this (this to make LoadBalancers work)
+
+
+-> Configure the Cloud Controller Manager
+
+git clone https://github.com/kubernetes/cloud-provider-aws.git
+
+cd cloud-provider-aws/examples/existing-cluster/base
+
+Create the daemonset using the following command -k is for Kustomize.
+kubectl create -k .
+
+kubectl get daemonset -n kube-system
+
+kubectl get pods -n kube-system
+
+-> test with creating the LoadBalancer service 
+
+
+
+--------- Using the hard way 
+
+Ref -> 
+Cloud Controller Manager Administration -> https://kubernetes.io/docs/tasks/administer-cluster/running-cloud-controller/#:~:text=kubelet%20%2C%20kube%2Dapiserver%20%2C%20and,it%20should%20not%20be%20specified.
+
+all the prerequisites and tagging applies here also , instead of using kubeadm config file we are mannually doing the things here 
+
+-> set the "--cloud-provider=external" flag in kubelet , kube-apiserver , kube-controller-manager yaml files 
+
+-> now create the service account and clusterrolebinding and bind the service account to "cluster-admin" role and deploy the daemonset .
+
+ccm.yaml
+
+# This is an example of how to set up cloud-controller-manager as a Daemonset in your cluster.
+# It assumes that your masters can run pods and has the role node-role.kubernetes.io/master
+# Note that this Daemonset will not work straight out of the box for your cloud, this is
+# meant to be a guideline.
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloud-controller-manager
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:cloud-controller-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: cloud-controller-manager
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    k8s-app: cloud-controller-manager
+  name: cloud-controller-manager
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      k8s-app: cloud-controller-manager
+  template:
+    metadata:
+      labels:
+        k8s-app: cloud-controller-manager
+    spec:
+      serviceAccountName: cloud-controller-manager
+      containers:
+      - name: cloud-controller-manager
+        # for in-tree providers we use registry.k8s.io/cloud-controller-manager
+        # this can be replaced with any other image for out-of-tree providers
+        image: registry.k8s.io/cloud-controller-manager:v1.8.0
+        command:
+        - /usr/local/bin/cloud-controller-manager
+        - --cloud-provider=[YOUR_CLOUD_PROVIDER]  # Add your own cloud provider here!
+        - --leader-elect=true
+        - --use-service-account-credentials
+        # these flags will vary for every cloud provider
+        - --allocate-node-cidrs=true
+        - --configure-cloud-routes=true
+        - --cluster-cidr=172.17.0.0/16
+      tolerations:
+      # this is required so CCM can bootstrap itself
+      - key: node.cloudprovider.kubernetes.io/uninitialized
+        value: "true"
+        effect: NoSchedule
+      # these tolerations are to have the daemonset runnable on control plane nodes
+      # remove them if your control plane nodes should not run pods
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      # this is to restrict CCM to only run on master nodes
+      # the node selector may vary depending on your cluster setup
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+
+change the --cluster-cidr and --cloud-provider (aws) 

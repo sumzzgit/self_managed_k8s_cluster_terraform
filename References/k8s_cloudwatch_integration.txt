@@ -1,0 +1,129 @@
+Ref -> 
+Set up the CloudWatch agent to collect cluster metrics -> https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Container-Insights-setup-metrics.html
+
+Setting up Container Insights on Amazon EKS and Kubernetes -> https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/deploy-container-insights-EKS.html
+
+
+steps -> 
+
+pre-requisites -> 
+Ref -> https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-daemonset.yaml
+
+-> make sure you cluster has enabled the RBAC , to check this go to /etc/kubernetes/manifests/kube-apiserver.yml and check the " --authorization-mode=Node,RBAC" 
+
+-> enable the kubelet webhook authentication mode , to check this go to /var/lib/kubelet/config.yaml file and check for the 
+apiVersion: kubelet.config.k8s.io/v1beta1
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    cacheTTL: 0s
+    enabled: true
+
+-> the IAM role which is attched to worker ( can also be added to master node IAM ) nodes should have the policy "CloudWatchAgentServerPolicy" 
+
+--------
+
+-> Create a namespace for CloudWatch
+kubectl apply -f https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cloudwatch-namespace.yaml
+
+-> Create a service account in the cluster 
+kubectl apply -f https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-serviceaccount.yaml
+
+-> download the cloudwatch agent config map and change the {{cluster_name}} to your cluster name 
+curl -O https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-configmap-enhanced.yaml
+
+-> apply the cloudwatch configmap file 
+kubectl apply -f cwagent-configmap-enhanced.yaml
+
+-> download the daemonset file or directly apply 
+wget https://raw.githubusercontent.com/aws-samples/amazon-cloudwatch-container-insights/latest/k8s-deployment-manifest-templates/deployment-mode/daemonset/container-insights-monitoring/cwagent/cwagent-daemonset.yaml
+
+-> change the image version to latest if get any error and if you want you can keep less resource request and limits and apply the file 
+kubectl apply -f cwagent-daemonset.yaml
+
+-> check the cloudwatch , the /aws/containerinsights/Cluster_Name/performance loggroup will created where all the node performance log events will be present . 
+
+-----------
+Troubleshooting -> 
+
+->  some Go lang undefined pointer error -> resolve this download the daemonset file and change the image version to latest and apply . 
+
+-> nodes doesn't contain IP SAN (subject alternative name) -> this is caused because all the worker nodes kubelet certificate ( /var/lib/kubelet/pki/kubelet.crt ) have the DNS hostname as the IP SAN and cloudwatch agent is using the node ip so it is not matching with IP SAN in kubelet certificate . 
+
+to check the IP SAN of the certificate use the command 
+openssl x509 -noout -text -in /var/lib/kubelet/pki/kubelet.crt | grep -i san 
+
+to resolve this issue regenerate the kubelet certificate with both DNS hostname and node ip as the SAN in all worker nodes . 
+
+use this shell script 
+
+
+---
+#!/bin/bash
+# this shell script will remove(keep backup) of initial (old) kubelet certificate which olny has node #hostname as the SAN and create new certifcates for the kubelet which has node ip and hostname as the SAN .
+# Variables (replace these with your actual values)
+NODE_HOSTNAME=$(hostname)
+NODE_IP=$(hostname -i)
+KUBELET_PKI_DIR="/var/lib/kubelet/pki"
+CA_CERT="/home/ec2-user/master_ca/ca.crt"
+CA_KEY="/home/ec2-user/master_ca/ca.key"
+CSR_CONF="csr.conf"
+
+# Create the CSR configuration file
+cat <<EOF > $CSR_CONF
+[req]
+req_extensions = v3_req
+distinguished_name = req_distinguished_name
+prompt = no
+
+[req_distinguished_name]
+CN = $NODE_HOSTNAME
+
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = $NODE_HOSTNAME
+IP.1 = $NODE_IP
+EOF
+
+# Stop the kubelet
+sudo systemctl stop kubelet
+
+# Backup existing certificates
+sudo mv $KUBELET_PKI_DIR/kubelet.crt $KUBELET_PKI_DIR/kubelet.crt.bak
+sudo mv $KUBELET_PKI_DIR/kubelet.key $KUBELET_PKI_DIR/kubelet.key.bak
+
+# Generate a new private key and CSR
+openssl genrsa -out kubelet.key 2048
+openssl req -new -key kubelet.key -out kubelet.csr -config $CSR_CONF
+
+# Sign the CSR using the Kubernetes CA
+openssl x509 -req -in kubelet.csr -CA $CA_CERT -CAkey $CA_KEY -CAcreateserial -out kubelet.crt -days 365 -extensions v3_req -extfile $CSR_CONF
+
+# Move the new certificates to the kubelet's pki directory
+sudo mv kubelet.crt $KUBELET_PKI_DIR/kubelet.crt
+sudo mv kubelet.key $KUBELET_PKI_DIR/kubelet.key
+
+# Restart the kubelet
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+# Clean up
+rm -f kubelet.csr
+rm -f $CSR_CONF
+
+# Verify the new certificate
+openssl x509 -noout -text -in $KUBELET_PKI_DIR/kubelet.crt
+
+--- 
+in the above shell script CA and CACERT file path can be changed according to your file paths 
+CA and CACERT you need to get from the master node . these will help sign the CSR certifcate 
+
+copy the files from the master node to all worker nodes either using scp or anything . 
+
+files in the master node are 
+/etc/kubernetes/pki/ca.crt   and  /etc/kubernetes/pki/ca.key

@@ -1,0 +1,53 @@
+Ref -> 
+https://www.kubecost.com/kubernetes-autoscaling/kubernetes-cluster-autoscaler/
+
+https://youtu.be/jM36M39MA3I?si=udxjcCA7OqYmk86d
+
+karpenter vs cluster autoscaler -> https://youtu.be/3QsVRHVdOnM?si=oXOGkORt4Mp88x2Z
+
+----------
+
+Cluster autoscaler in self managed k8s cluster 
+-> cluster autoscaler scans for pending pods every 10 seconds and if there any peding pods it uses any cloud provider associated to launch new virtual machined as worker nodes . 
+-> cluster autoscaler will not check the CPU and memory utillization to make decision on scalling . it will check for the pending pods and if there any pending pods due to resource shortage then it will trigget the Cluster autoscaling to add the nodes . 
+
+
+------
+Ref -> https://www.kubecost.com/kubernetes-autoscaling/kubernetes-cluster-autoscaler/
+using AWS for the cluster auto scalling , also applies to EKS 
+-> need to have the EC2 auto scalling group with following labels 
+k8s.io/cluster-autoscaler/<cluster_name> = owned 
+k8s.io/cluster-autoscaler/enabled = true 
+these lables are very important because they help in decision to make that which ASG belongs to which cluster 
+
+-> (for EKS) ADD the identity provider in IAM using the EKS identity provider url and "sts.amazonaws.com" 
+
+-> create policy 
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Action": [
+              "autoscaling:DescribeAutoScalingGroups",
+              "autoscaling:DescribeAutoScalingInstances",
+              "autoscaling:DescribeLaunchConfigurations",
+              "autoscaling:DescribeTags",
+              "autoscaling:SetDesiredCapacity",
+              "autoscaling:TerminateInstanceInAutoScalingGroup",
+              "ec2:DescribeLaunchTemplateVersions"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      }
+  ]
+}
+
+ignore these if the master and worker node policy contains these 
+
+-> (for self managed cluster and EKS ) attach this policy to worker and master node IAM role 
+
+-> (for EKS) you can either attch policy to worker nodes or create the role and attch it serviceaccount (IRSA)
+create role with identity provider as the trust relationship and after creating the role edit the trust relationship and add this along with aud 
+"oidc.eks.ap-south-1.amazonaws.com/id/AA78D0C497A09D0D68EDD3470DF2F8D:sub": "system:serviceaccount:kube-system:cluster-autoscaler" 
+

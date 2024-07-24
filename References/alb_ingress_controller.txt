@@ -1,0 +1,33 @@
+Ref -> https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.4/deploy/installation/  -
+
+steps -> 
+-> make sure you have the aws cloud controller manager installed in the cluster 
+-> ensure that your private subnets should have tag "kubernetes.io/role/internal-elb" = "1"  and 
+public subnets should have the tag "kubernetes.io/role/elb" = "1"
+
+-> your worker node and master node should have this policy along with policy need for the k8s cluster 
+https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.4.7/docs/install/iam_policy.json
+
+-> apply the yaml files 
+kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.5.4/cert-manager.yaml
+
+-> download the file 
+wget https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/download/v2.4.7/v2_4_7_full.yaml
+
+-> change the cluster name 
+--cluster-name=<INSERT_CLUSTER_NAME> 
+and add additional flags 
+--load-balancer-class=service.k8s.aws/nlb   or   service.k8s.aws/alb 
+
+Ref -> https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.4/deploy/configurations/
+
+
+-> apply the edited yaml file 
+kubectl apply -f v2_4_7_full.yaml
+
+-> Optionally download the default ingressclass and ingressclass params
+wget https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/download/v2.4.7/v2_4_7_ingclass.yaml
+kubectl apply -f v2_4_7_ingclass.yaml
+
+
+-> now try to apply the ingress file with ingressclass as the "alb"
