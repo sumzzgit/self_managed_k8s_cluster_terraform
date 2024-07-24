@@ -250,7 +250,7 @@ resource "aws_instance" "worker_nodes" {
     # doing this because ca.key file requires root perssion but we don't have the root pem file , ec2-user pem cannot be used here.
       "ssh -o StrictHostKeyChecking=no -i /home/ec2-user/master.pem ec2-user@${aws_instance.master-instance.private_ip} \"sudo cat /etc/kubernetes/pki/ca.key\" > /home/ec2-user/master_ca/ca.key", 
 
-      "echo 'generating new certificates with node ip and hostname as SAN' ",
+      "echo 'generating new certificates with node ip and hostname as SAN ' ",
       "chmod +x /home/ec2-user/add_ip_san.sh",
       "sudo sh /home/ec2-user/add_ip_san.sh"
     ]
